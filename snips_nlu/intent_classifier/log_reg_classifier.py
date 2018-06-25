@@ -1,7 +1,9 @@
 from __future__ import unicode_literals
 
+import json
 import logging
-from builtins import str, zip, range
+from builtins import bytes, range, str, zip
+from pathlib import Path
 
 import numpy as np
 from future.utils import iteritems
@@ -160,6 +162,59 @@ class LogRegIntentClassifier(IntentClassifier):
             # probabilities calibrated
             return prob
 
+    def persist(self, path):
+        """Persist the object at the given path"""
+        path = Path(path)
+        if path.exists():
+            raise OSError("Persisting directory %s already exists" % str(path))
+        path.mkdir()
+        classifier_json = bytes(json.dumps(self.to_dict()), encoding="utf8")
+        with (path / "intent_classifier.json").open(mode="w") as f:
+            f.write(classifier_json.decode("utf8"))
+        self.persist_metadata(path)
+
+    @classmethod
+    def from_path(cls, path):
+        """Load a :class:`LogRegIntentClassifier` instance from a path
+
+        The data at the given path must have been generated using
+        :func:`~LogRegIntentClassifier.persist`
+        """
+        path = Path(path)
+        model_path = path / "intent_classifier.json"
+        if not model_path.exists():
+            raise OSError("Missing intent classifier model file: %s"
+                          % model_path.name)
+
+        with model_path.open() as f:
+            model_dict = json.load(f)
+        return cls.from_dict(model_dict)
+
+    @classmethod
+    def from_dict(cls, unit_dict):
+        """Create a :class:`LogRegIntentClassifier` instance from a dict
+
+        The dict must have been generated with
+        :func:`~LogRegIntentClassifier.to_dict`
+        """
+        config = LogRegIntentClassifierConfig.from_dict(unit_dict["config"])
+        intent_classifier = cls(config=config)
+        sgd_classifier = None
+        coeffs = unit_dict['coeffs']
+        intercept = unit_dict['intercept']
+        t_ = unit_dict["t_"]
+        if coeffs is not None and intercept is not None:
+            sgd_classifier = SGDClassifier(**LOG_REG_ARGS)
+            sgd_classifier.coef_ = np.array(coeffs)
+            sgd_classifier.intercept_ = np.array(intercept)
+            sgd_classifier.t_ = t_
+        intent_classifier.classifier = sgd_classifier
+        intent_classifier.intent_list = unit_dict['intent_list']
+        featurizer = unit_dict['featurizer']
+        if featurizer is not None:
+            intent_classifier.featurizer = Featurizer.from_dict(featurizer)
+        return intent_classifier
+
     def to_dict(self):
         """Returns a json-serializable dict"""
         featurizer_dict = None
@@ -182,31 +237,6 @@ class LogRegIntentClassifier(IntentClassifier):
             "intent_list": self.intent_list,
             "featurizer": featurizer_dict,
         }
-
-    @classmethod
-    def from_dict(cls, unit_dict):
-        """Creates a :class:`LogRegIntentClassifier` instance from a dict
-
-        The dict must have been generated with
-        :func:`~LogRegIntentClassifier.to_dict`
-        """
-        config = LogRegIntentClassifierConfig.from_dict(unit_dict["config"])
-        intent_classifier = cls(config=config)
-        sgd_classifier = None
-        coeffs = unit_dict['coeffs']
-        intercept = unit_dict['intercept']
-        t_ = unit_dict["t_"]
-        if coeffs is not None and intercept is not None:
-            sgd_classifier = SGDClassifier(**LOG_REG_ARGS)
-            sgd_classifier.coef_ = np.array(coeffs)
-            sgd_classifier.intercept_ = np.array(intercept)
-            sgd_classifier.t_ = t_
-        intent_classifier.classifier = sgd_classifier
-        intent_classifier.intent_list = unit_dict['intent_list']
-        featurizer = unit_dict['featurizer']
-        if featurizer is not None:
-            intent_classifier.featurizer = Featurizer.from_dict(featurizer)
-        return intent_classifier
 
     def log_best_features(self, top_n=20):
         log = "Top {} features weights by intent:\n".format(top_n)

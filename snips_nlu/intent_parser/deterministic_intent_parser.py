@@ -1,8 +1,10 @@
 from __future__ import unicode_literals
 
+import json
 import logging
 import re
-from builtins import str
+from builtins import bytes, str
+from pathlib import Path
 
 from future.utils import itervalues, iteritems
 
@@ -99,7 +101,7 @@ class DeterministicIntentParser(IntentParser):
         logger, logging.DEBUG, "DeterministicIntentParser result -> {result}")
     @log_elapsed_time(logger, logging.DEBUG, "Parsed in {elapsed_time}.")
     def parse(self, text, intents=None):
-        """Performs intent parsing on the provided *text*
+        """Perform intent parsing on the provided *text*
 
         Intent and slots are extracted simultaneously through pattern matching
 
@@ -177,8 +179,38 @@ class DeterministicIntentParser(IntentParser):
                               key=lambda s: s[RES_MATCH_RANGE][START])
         return parsing_result(text, parsed_intent, parsed_slots)
 
+    def persist(self, path):
+        """Persist the object at the given path"""
+        path = Path(path)
+        if path.exists():
+            raise OSError("Persisting directory %s already exists" % str(path))
+        path.mkdir()
+        parser_json = bytes(json.dumps(self.to_dict()), encoding="utf8")
+        parser_path = path / "intent_parser.json"
+
+        with parser_path.open(mode="w") as f:
+            f.write(parser_json.decode("utf8"))
+        self.persist_metadata(path)
+
+    @classmethod
+    def from_path(cls, path):
+        """Load a :class:`DeterministicIntentParser` instance from a path
+
+        The data at the given path must have been generated using
+        :func:`~DeterministicIntentParser.persist`
+        """
+        path = Path(path)
+        metadata_path = path / "intent_parser.json"
+        if not metadata_path.exists():
+            raise OSError("Missing deterministic intent parser metadata file: "
+                          "%s" % metadata_path.name)
+
+        with metadata_path.open() as f:
+            metadata = json.load(f)
+        return cls.from_dict(metadata)
+
     def to_dict(self):
-        """Returns a json-serializable dict"""
+        """Return a json-serializable dict"""
         return {
             "unit_name": self.unit_name,
             "config": self.config.to_dict(),
@@ -190,7 +222,7 @@ class DeterministicIntentParser(IntentParser):
 
     @classmethod
     def from_dict(cls, unit_dict):
-        """Creates a :class:`DeterministicIntentParser` instance from a dict
+        """Create a :class:`DeterministicIntentParser` instance from a dict
 
         The dict must have been generated with
         :func:`~DeterministicIntentParser.to_dict`
